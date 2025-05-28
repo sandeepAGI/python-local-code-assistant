@@ -54,7 +54,7 @@ The application offers a user-friendly interface to interact with a locally runn
     scipy
     pandas
     selenium
-    webdriver-manager 
+    webdriver-manager
     # Add any other libraries your demo snippets might use
     ```
     Then install them:
@@ -95,6 +95,19 @@ your-project/
 5.  Open your web browser to the local address provided by Streamlit.
 6.  Use the sidebar to select the mode, upload/paste code, and interact with the assistant.
 
+## Limitations & Considerations
+
+It's important to understand the limitations when working with a 7B/8B parameter model locally:
+
+* **Context Window:** These models have a finite "context window" (the amount of text they can consider at once, both input and output). While Codellama can support large windows in theory, practical local implementations often have limits. As we observed during testing, providing very large code snippets (like the entire application script) can exceed this limit, leading to:
+    * The model "forgetting" instructions.
+    * Incomplete or truncated responses.
+    * The model defaulting to simpler tasks (like explaining instead of refactoring).
+* **Code Snippet Size:** For optimal results, especially for complex tasks like Refactor or Debug, it's highly recommended to work with **smaller, focused code snippets** (e.g., single functions or classes) rather than entire files.
+* **Local Performance:** Running LLMs locally requires significant computational resources (RAM and ideally a GPU). Response times will generally be slower compared to large, cloud-hosted APIs.
+* **Model Capability:** While `codellama:7b-instruct` is very capable for its size, it is not as powerful as much larger models (GPT-4, Claude 3, Llama 3 70b, etc.). It may struggle with highly abstract reasoning, extremely complex code, or subtle bugs. Its instruction-following, especially for negative constraints, can sometimes be inconsistent.
+* **External Factors:** Features relying on external systems (like the web scraping demo) are inherently brittle and can break if the external website changes its structure.
+
 ## Prompt Engineering & Learnings
 
 This project involved significant iterative prompt engineering. Key takeaways include:
@@ -102,20 +115,18 @@ This project involved significant iterative prompt engineering. Key takeaways in
 * **System Prompt is Key:** A detailed system prompt, clearly defining the AI's role and the expected output for *each specific task*, dramatically improved response quality and structure.
 * **Structured Prompts Work:** For tasks like "Explain" and "Debug," asking for a specific, structured output format (e.g., the 3-part debug report) and reinforcing it in the system prompt yielded excellent results.
 * **Instruction Following Limits (Refactor):** We discovered that `codellama:7b-instruct` strongly resists negative constraints for refactoring (i.e., "Do *not* add explanations"). Even forceful prompts failed.
-* **Pivoting Goals:** Acknowledging model limitations and adjusting the goal (from "only code" to "explain + code" for refactoring) led to a successful and practical outcome. It's often better to work *with* the model's tendencies than to fight them, especially when the alternative output is still valuable.
-* **Context Window Matters:** Attempting to process large files (like the entire application script) confirmed that the 7b model hits context limits, leading to incomplete or irrelevant responses. **Chunking** (processing smaller pieces) is essential for large inputs.
-* **Simplicity Can Be Effective:** Our final `build_prompt` function uses simple string concatenation, which proved more robust against potential rendering/copy-paste issues than complex multi-line f-strings in the development environment.
+* **Pivoting Goals:** Acknowledging model limitations and adjusting the goal (from "only code" to "explain + code" for refactoring) led to a successful and practical outcome. It's often better to work *with* the model's tendencies.
+* **Context Window Matters:** Attempting to process large files confirmed the model's limits, reinforcing the need for chunking.
+* **Simplicity Can Be Effective:** Using simple string concatenation for prompts proved more robust against copy-paste/rendering issues than multi-line f-strings in our development process.
 
 ## Demo Snippets
 
-The project includes several demo snippets (or can be used with them) to showcase its capabilities across various business domains:
+The project is well-suited for demonstrating its capabilities using snippets across various business domains:
 
 * **Finance:** Black-Scholes Option Pricing.
 * **Logistics:** Greedy TSP Route Finding.
 * **Web Data:** Selenium-based Stock Price Scraping.
 * **Data Analysis:** Pandas Sales Aggregation.
-
-These allow for demonstrating explanation, refactoring (e.g., `iterrows` to `groupby`), and debugging (e.g., broken web selectors, division by zero).
 
 ## Future Improvements
 
@@ -124,7 +135,18 @@ These allow for demonstrating explanation, refactoring (e.g., `iterrows` to `gro
 * **UI Enhancements:** Add options for refactoring goals or explanation detail levels.
 * **Automated Input Chunking:** Automatically handle large code files by breaking them down.
 * **Output Parsing:** Add options to extract *only* code blocks from responses if needed.
-* **Error Handling:** Improve robustness within the Streamlit app.
+* **Error Handling & Retries:** Enhance the Streamlit app to handle LLM errors more gracefully.
 * **Model Switching:** Allow users to select different Ollama models.
+
+## Dependencies
+
+* streamlit
+* langchain-ollama
+* langchain
+* numpy
+* scipy
+* pandas
+* selenium
+* webdriver-manager
 
 ---
