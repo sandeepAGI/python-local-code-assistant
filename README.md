@@ -128,14 +128,100 @@ The project is well-suited for demonstrating its capabilities using snippets acr
 * **Web Data:** Selenium-based Stock Price Scraping.
 * **Data Analysis:** Pandas Sales Aggregation.
 
-## Future Improvements
+## Next Steps for Implementation
+
+To enhance robustness and demo quality, the following improvements should be implemented in priority order:
+
+### Phase 1: Error Handling & Resilience (Week 1 - Critical)
+
+#### 1.1 Model Connection Error Handling
+- **Current Issue:** No handling for Ollama service failures
+- **Implementation:** Replace `llm = ChatOllama(model="codellama:7b-instruct")` with robust initialization that includes retry logic, connection testing, and graceful failure handling
+- **Code Location:** `app_code_assistant.py:19`
+
+#### 1.2 File Upload Validation
+- **Current Issue:** No validation in `read_code_file()` function
+- **Implementation:** Add file size limits (max 1MB), UTF-8 validation, and basic security checks for potentially unsafe code patterns
+- **Code Location:** `app_code_assistant.py:59-60`
+
+#### 1.3 LLM Invocation Error Handling
+- **Current Issue:** No error handling around `llm.invoke()` calls
+- **Implementation:** Create `safe_llm_invoke()` function with retry logic, response validation, and user-friendly error messages
+- **Code Location:** `app_code_assistant.py:223-226, 248-251`
+
+#### 1.4 Input Validation
+- **Current Issue:** No validation of code input size or format
+- **Implementation:** Add token estimation, size limits, and basic Python syntax validation with user warnings
+- **Benefits:** Prevents context window overflow and provides better user feedback
+
+### Phase 2: Quality Improvements (Week 2 - High Priority)
+
+#### 2.1 Enhanced System Prompts with Examples
+- **Current Issue:** Generic system prompt lacks task-specific guidance
+- **Implementation:** Replace current system prompt with task-specific prompts containing structured formats and examples for Explain, Refactor, and Debug tasks
+- **Code Location:** `app_code_assistant.py:156-182`
+- **Expected Impact:** Dramatically improve response consistency and structure
+
+#### 2.2 Few-Shot Prompting Implementation
+- **Current Issue:** No examples provided to guide model behavior
+- **Implementation:** Add `add_few_shot_examples()` function that includes high-quality input/output examples for each task type
+- **Benefits:** Show the model exactly what format and quality is expected
+
+#### 2.3 Response Quality Validation
+- **Current Issue:** No validation of model output quality
+- **Implementation:** Create `validate_response_quality()` function to check for completeness, proper formatting, and task-specific requirements
+- **Features:** Automatic retry for poor responses, quality scoring
+
+#### 2.4 Model Parameter Optimization
+- **Current Issue:** Using default parameters not optimized for demo quality
+- **Implementation:** Configure `ChatOllama` with `temperature=0.1`, `top_p=0.9`, `repeat_penalty=1.1`, and `num_ctx=4096`
+- **Code Location:** `app_code_assistant.py:19`
+
+### Phase 3: Performance Optimization (Week 3-4 - Medium Priority)
+
+#### 3.1 Response Caching
+- **Implementation:** Add `@st.cache_data` decorator with hash-based caching for identical prompts
+- **Benefits:** Faster responses for repeated queries, better demo experience
+
+#### 3.2 Code Chunking for Large Files
+- **Current Issue:** Large files exceed context window and cause poor responses
+- **Implementation:** Create `intelligent_code_chunking()` using AST parsing to maintain semantic boundaries
+- **Features:** Automatic chunking with function/class preservation
+
+#### 3.3 Async Processing
+- **Implementation:** Add asynchronous LLM calls using `ThreadPoolExecutor` for better UI responsiveness
+- **Benefits:** Non-blocking interface during model inference
+
+#### 3.4 Memory Management
+- **Implementation:** Add session state cleanup to prevent memory buildup from stored responses
+- **Features:** Automatic cleanup of old responses, memory usage monitoring
+
+### Implementation Priority Summary
+
+1. **Week 1 (Critical):** Error handling for connection failures and file validation
+2. **Week 2 (High):** Enhanced prompts with examples and response validation
+3. **Week 3 (Medium):** Performance optimizations and caching
+4. **Week 4 (Low):** Advanced features like chunking and async processing
+
+### Expected Outcomes
+
+- **Robustness:** Application handles failures gracefully without crashes
+- **Demo Quality:** Consistent, well-formatted responses that showcase 7B model capabilities
+- **Performance:** Faster responses and better user experience
+- **Scalability:** Ability to handle larger code files and more complex tasks
+
+### Testing Strategy
+
+For each phase, implement comprehensive testing:
+- **Error Scenarios:** Test with disconnected Ollama, corrupted files, oversized inputs
+- **Quality Metrics:** Measure response consistency, format compliance, and user satisfaction
+- **Performance Benchmarks:** Monitor response times, memory usage, and cache hit rates
+
+## Future Improvements (Lower Priority)
 
 * **Parameter Tuning:** Implement UI controls or configurations to adjust LLM parameters like `temperature`.
-* **Few-Shot Prompting:** Add few-shot examples to prompts for tasks requiring highly specific output formats.
 * **UI Enhancements:** Add options for refactoring goals or explanation detail levels.
-* **Automated Input Chunking:** Automatically handle large code files by breaking them down.
 * **Output Parsing:** Add options to extract *only* code blocks from responses if needed.
-* **Error Handling & Retries:** Enhance the Streamlit app to handle LLM errors more gracefully.
 * **Model Switching:** Allow users to select different Ollama models.
 
 ## Dependencies
