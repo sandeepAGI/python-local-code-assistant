@@ -9,14 +9,69 @@ from io import BytesIO
 import base64
 import html
 import re
+import time
+import requests
+from typing import Optional
 
 # ========== Setup Paths ==========
 BASE_DIR = os.path.expanduser("~/myworkspace/utilities/code-demo")
 FILES_DIR = os.path.join(BASE_DIR, "files")
 os.makedirs(FILES_DIR, exist_ok=True)
 
+# ========== Model Connection Error Handling ==========
+def initialize_llm_with_retry(max_retries: int = 3, retry_delay: float = 2.0) -> Optional[ChatOllama]:
+    """
+    Initialize ChatOllama with robust error handling and retry logic.
+    
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Delay between retry attempts in seconds
+        
+    Returns:
+        ChatOllama instance or None if connection fails
+    """
+    for attempt in range(max_retries):
+        try:
+            # Test if Ollama service is running
+            try:
+                response = requests.get("http://localhost:11434/api/tags", timeout=5)
+                if response.status_code != 200:
+                    raise ConnectionError("Ollama service not responding")
+            except requests.exceptions.RequestException:
+                raise ConnectionError("Cannot connect to Ollama service")
+            
+            # Initialize the model
+            llm = ChatOllama(
+                model="codellama:7b-instruct",
+                temperature=0.1,
+                top_p=0.9,
+                num_ctx=4096
+            )
+            
+            # Test the model with a simple query
+            test_response = llm.invoke([
+                SystemMessage(content="You are a helpful assistant."),
+                HumanMessage(content="Hello")
+            ])
+            
+            if test_response and test_response.content:
+                return llm
+            else:
+                raise ValueError("Model responded with empty content")
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                st.warning(f"Connection attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                st.error(f"Failed to initialize model after {max_retries} attempts: {str(e)}")
+                st.error("Please ensure Ollama is running and the codellama:7b-instruct model is available.")
+                return None
+    
+    return None
+
 # ========== Initialize Model ==========
-llm = ChatOllama(model="codellama:7b-instruct")
+llm = initialize_llm_with_retry()
 
 # ========== Custom Styling ==========
 def get_base_css():
@@ -56,8 +111,217 @@ def get_base_css():
     """
 
 # ========== Helper Functions ==========
+def validate_and_read_code_file(file) -> tuple[str, list[str]]:
+    """
+    Validate and read uploaded code file with comprehensive security checks.
+    
+    Args:
+        file: Streamlit uploaded file object
+        
+    Returns:
+        tuple: (file_content, list_of_warnings)
+    """
+    warnings = []
+    
+    # Check file size (max 1MB)
+    MAX_FILE_SIZE = 1024 * 1024  # 1MB in bytes
+    if file.size > MAX_FILE_SIZE:
+        raise ValueError(f"File size ({file.size} bytes) exceeds maximum allowed size ({MAX_FILE_SIZE} bytes)")
+    
+    # Read file content
+    try:
+        content = file.read().decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"File contains invalid UTF-8 characters: {str(e)}")
+    
+    # Check for potentially unsafe code patterns
+    dangerous_patterns = [
+        r'import\s+subprocess',
+        r'import\s+os',
+        r'exec\s*\(',
+        r'eval\s*\(',
+        r'__import__\s*\(',
+        r'open\s*\(',
+        r'file\s*\(',
+        r'input\s*\(',
+        r'raw_input\s*\(',
+        r'compile\s*\(',
+        r'globals\s*\(',
+        r'locals\s*\(',
+        r'vars\s*\(',
+        r'dir\s*\(',
+        r'getattr\s*\(',
+        r'setattr\s*\(',
+        r'hasattr\s*\(',
+        r'delattr\s*\(',
+    ]
+    
+    found_patterns = []
+    for pattern in dangerous_patterns:
+        if re.search(pattern, content, re.IGNORECASE):
+            found_patterns.append(pattern.replace(r'\s+', ' ').replace(r'\s*', '').replace(r'\(', '('))
+    
+    if found_patterns:
+        warnings.append(f"Potentially unsafe code patterns detected: {', '.join(found_patterns)}")
+    
+    # Check for very long lines that might cause issues
+    lines = content.split('\n')
+    long_lines = [i+1 for i, line in enumerate(lines) if len(line) > 500]
+    if long_lines:
+        warnings.append(f"Very long lines detected (>500 chars) at line numbers: {long_lines[:5]}")
+    
+    # Basic syntax validation for Python files
+    if file.name.endswith('.py'):
+        try:
+            compile(content, file.name, 'exec')
+        except SyntaxError as e:
+            warnings.append(f"Python syntax error detected: {str(e)}")
+    
+    return content, warnings
+
 def read_code_file(file):
-    return file.read().decode("utf-8")
+    """Legacy function for backward compatibility"""
+    content, warnings = validate_and_read_code_file(file)
+    if warnings:
+        for warning in warnings:
+            st.warning(warning)
+    return content
+
+def safe_llm_invoke(llm_instance, messages, max_retries: int = 3, retry_delay: float = 1.0):
+    """
+    Safely invoke LLM with error handling and retry logic.
+    
+    Args:
+        llm_instance: The ChatOllama instance
+        messages: List of messages to send to the model
+        max_retries: Maximum number of retry attempts
+        retry_delay: Delay between retry attempts in seconds
+        
+    Returns:
+        Model response or None if all attempts fail
+    """
+    if llm_instance is None:
+        st.error("Model is not initialized. Please restart the application.")
+        return None
+        
+    for attempt in range(max_retries):
+        try:
+            # Validate input messages
+            if not messages or not isinstance(messages, list):
+                raise ValueError("Messages must be a non-empty list")
+            
+            # Check for reasonable message sizes
+            total_content_length = sum(len(msg.content) for msg in messages if hasattr(msg, 'content'))
+            if total_content_length > 50000:  # ~50KB limit
+                st.warning("Input is very large and may cause issues. Consider using smaller code snippets.")
+            
+            # Make the API call
+            response = llm_instance.invoke(messages)
+            
+            # Validate response
+            if not response or not hasattr(response, 'content') or not response.content:
+                raise ValueError("Received empty response from model")
+            
+            # Check for common error patterns in response
+            error_indicators = [
+                "I cannot", "I can't", "I'm not able to", "I'm sorry, but",
+                "Error:", "Exception:", "Traceback", "Failed to"
+            ]
+            
+            response_text = response.content.lower()
+            for indicator in error_indicators:
+                if indicator.lower() in response_text[:200]:  # Check first 200 chars
+                    st.warning(f"Model response may indicate an issue: {indicator}")
+                    break
+            
+            return response
+            
+        except Exception as e:
+            error_msg = str(e)
+            if attempt < max_retries - 1:
+                st.warning(f"Attempt {attempt + 1} failed: {error_msg}. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                st.error(f"Failed to get response after {max_retries} attempts: {error_msg}")
+                
+                # Provide helpful error messages based on error type
+                if "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+                    st.error("Connection issue: Please check if Ollama is running and accessible.")
+                elif "context" in error_msg.lower() or "token" in error_msg.lower():
+                    st.error("Input too large: Please try with a smaller code snippet.")
+                elif "model" in error_msg.lower():
+                    st.error("Model issue: Please ensure codellama:7b-instruct is properly installed.")
+                
+                return None
+    
+    return None
+
+def estimate_token_count(text: str) -> int:
+    """
+    Estimate token count for input text (rough approximation).
+    
+    Args:
+        text: Input text to estimate tokens for
+        
+    Returns:
+        Estimated number of tokens
+    """
+    # Rough estimation: 1 token ≈ 4 characters for English text
+    # This is a conservative estimate for code which may have more tokens
+    return len(text) // 3
+
+def validate_code_input(code: str, user_prompt: str = "") -> tuple[bool, list[str]]:
+    """
+    Validate code input for size, format, and potential issues.
+    
+    Args:
+        code: Code string to validate
+        user_prompt: Optional user prompt to include in validation
+        
+    Returns:
+        tuple: (is_valid, list_of_warnings)
+    """
+    warnings = []
+    
+    # Check if input is empty
+    if not code.strip() and not user_prompt.strip():
+        return False, ["No code or prompt provided"]
+    
+    # Estimate token count
+    total_text = code + user_prompt
+    estimated_tokens = estimate_token_count(total_text)
+    
+    # Token limits based on model context window
+    MAX_TOKENS = 3000  # Conservative limit for 4K context window
+    WARN_TOKENS = 2000  # Warning threshold
+    
+    if estimated_tokens > MAX_TOKENS:
+        return False, [f"Input too large: ~{estimated_tokens} tokens (max: {MAX_TOKENS}). Please use smaller code snippets."]
+    elif estimated_tokens > WARN_TOKENS:
+        warnings.append(f"Large input detected: ~{estimated_tokens} tokens. Consider using smaller code snippets for better results.")
+    
+    # Check for very long lines
+    if code:
+        lines = code.split('\n')
+        long_lines = [i+1 for i, line in enumerate(lines) if len(line) > 200]
+        if len(long_lines) > 5:
+            warnings.append(f"Many long lines detected (>200 chars). This may affect code analysis quality.")
+    
+    # Check for excessive repetition (potential copy-paste errors)
+    if code:
+        lines = code.split('\n')
+        unique_lines = set(line.strip() for line in lines if line.strip())
+        if len(lines) > 50 and len(unique_lines) < len(lines) * 0.5:
+            warnings.append("High repetition detected in code. Please check for copy-paste errors.")
+    
+    # Basic Python syntax validation for code input
+    if code.strip():
+        try:
+            compile(code, '<string>', 'exec')
+        except SyntaxError as e:
+            warnings.append(f"Python syntax error detected: {str(e)}")
+    
+    return True, warnings
 
 # --- ENHANCED build_prompt function (No Multi-line Strings) ---
 def build_prompt(task, code=None, user_prompt=None, refactor_focus_areas=None):
@@ -218,22 +482,38 @@ with col1:
             if not code:
                 st.error("Please upload or enter some code.")
             else:
+                # Validate input before processing
+                is_valid, validation_warnings = validate_code_input(code)
+                
+                if not is_valid:
+                    for warning in validation_warnings:
+                        st.error(warning)
+                    st.stop()
+                
+                # Show warnings
+                for warning in validation_warnings:
+                    st.warning(warning)
+                
                 with st.spinner("Generating model response..."):
                     final_prompt = build_prompt(task, code) # Using new build_prompt
-                    response = llm.invoke([
+                    messages = [
                         SystemMessage(content=custom_sys_prompt), # Using potentially customized system prompt
                         HumanMessage(content=final_prompt)
-                    ])
+                    ]
+                    response = safe_llm_invoke(llm, messages)
 
-                st.session_state.last_response = response.content
-                st.session_state.last_response_metadata = {
-                    "mode": mode,
-                    "task": task,
-                    "code": code
-                }
+                if response:
+                    st.session_state.last_response = response.content
+                    st.session_state.last_response_metadata = {
+                        "mode": mode,
+                        "task": task,
+                        "code": code
+                    }
 
-                if save_toggle:
-                    save_output({"mode": mode, "task": task, "code": code}, response.content)
+                    if save_toggle:
+                        save_output({"mode": mode, "task": task, "code": code}, response.content)
+                else:
+                    st.error("Failed to get response from model. Please try again.")
 
 
     elif mode == "Direct Prompt":
@@ -242,23 +522,38 @@ with col1:
             if not user_prompt.strip() and not code.strip():
                 st.error("Please enter a prompt or provide some code.")
             else:
+                # Validate input before processing
+                is_valid, validation_warnings = validate_code_input(code if code else "", user_prompt)
+                
+                if not is_valid:
+                    for warning in validation_warnings:
+                        st.error(warning)
+                    st.stop()
+                
+                # Show warnings
+                for warning in validation_warnings:
+                    st.warning(warning)
+                
                 with st.spinner("Generating model response..."):
                     final_prompt = build_prompt(None, code if code else None, user_prompt)
-                    # --- MODIFIED llm.invoke to include SystemMessage ---
-                    response = llm.invoke([
+                    messages = [
                         SystemMessage(content=custom_sys_prompt), # Ensure system prompt is always used
                         HumanMessage(content=final_prompt)
-                    ])
+                    ]
+                    response = safe_llm_invoke(llm, messages)
 
-                st.session_state.last_response = response.content
-                st.session_state.last_response_metadata = {
-                    "mode": mode,
-                    "prompt": user_prompt,
-                    "code": code
-                }
+                if response:
+                    st.session_state.last_response = response.content
+                    st.session_state.last_response_metadata = {
+                        "mode": mode,
+                        "prompt": user_prompt,
+                        "code": code
+                    }
 
-                if save_toggle:
-                    save_output({"mode": mode, "prompt": user_prompt, "code": code}, response.content)
+                    if save_toggle:
+                        save_output({"mode": mode, "prompt": user_prompt, "code": code}, response.content)
+                else:
+                    st.error("Failed to get response from model. Please try again.")
 
 with col2:
     st.subheader("Model Response")
